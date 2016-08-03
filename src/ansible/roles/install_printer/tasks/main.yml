@@ -1,0 +1,6 @@
+- name: copy files -  driver innstall
+  copy: src=/drv dest=/tmp/drv
+- name: change permissions to copied files
+  command: chmod +x -R /tmp/drv
+- name run setup  printer
+  command: cd /tmp/drv && ./install.sh

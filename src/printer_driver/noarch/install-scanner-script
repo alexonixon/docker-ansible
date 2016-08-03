@@ -1,0 +1,180 @@
+restart_udev() {
+	if ( cat /etc/issue 2>/dev/null | grep -q "Fedora release 9" ); then
+		true
+	elif udevadm help >/dev/null 2>&1; then
+		udevadm control --reload_rules || udevadm control --reload-rules
+		
+		local VID="$(get_oem_field 'VID')"
+		local PIDS="$(get_oem_field 'PIDS')"
+		# reset /dev/usb/lp*
+		local usbresetter="$DIST_DIR/$HARDWARE_PLATFORM/usbresetter"
+		if [ -f "$usbresetter" ]; then
+			log_message "$usbresetter $VID $PIDS "
+			"$usbresetter" $VID $PIDS 2>&1 | log_message
+		fi
+		if udevadm trigger --help | grep "\--attr-match" >/dev/null 2>&1 ; then 
+			for pid in $PIDS ; do
+				udevadm trigger --action=add --attr-match=idVendor=$VID --attr-match=idProduct=$pid 
+				log_message "udevadm trigger --action=add --attr-match=idVendor=$VID --attr-match=idProduct=$pid"
+			done
+		elif udevadm trigger --help | grep "\--subsystem-match" >/dev/null 2>&1 ; then
+			udevadm trigger --action=add --subsystem-match=usb --subsystem-match=usb_device
+			log_message "udevadm trigger --action=add --subsystem-match=usb --subsystem-match=usb_device"
+		else 
+			udevadm trigger --action=add
+			log_message "udevadm trigger --action=add"
+		fi
+	elif udevtrigger --help >/dev/null 2>&1; then
+		udevcontrol reload_rules
+		udevtrigger
+		log_message "udevtrigger"
+	elif test -f /etc/init.d/udev ; then
+		/etc/init.d/udev restart
+		log_message "/etc/init.d/udev restart"
+	else
+		return 1
+	fi
+	return 0
+}
+
+restart_hal() {
+	local HAL_DEMON_NAME_LIST="hal hald haldaemon"
+	for i in $HAL_DEMON_NAME_LIST ; do
+		local FULL_NAME="/etc/init.d/$i"
+		if [ -f "$FULL_NAME" ]; then 
+			"$FULL_NAME" restart 2>&1 | log_message
+		fi
+	done
+}
+
+fill_full_template() {
+# $1 - template path
+# $2 - output file name
+	
+	# teplate files can use tab() function 
+	# to insert '\t' symbol
+	tab2() {
+	# $1 - number of tabs inserted
+		local amount=$1
+		if [ -z "$amount" ] ; then
+			amount="1";
+		fi
+		for i in $(seq 1 $amount) ; do
+			echo -n "    "
+		done
+	}
+	tab() {
+	# $1 - number of tabs inserted
+		local amount=$1
+		if [ -z "$amount" ] ; then
+			amount="1";
+		fi
+		for i in $(seq 1 $amount) ; do
+			echo -n "    "
+		done
+	}
+	
+	local template="$1"
+	local output="$2"
+	
+	[ -z "$template" -o -z "$output" ] && return 1
+
+	local tmp_file=$(mktemp -t tmp_file.XXXX)
+
+	local VID="$(get_oem_field "VID")"
+	local PIDS="$(get_oem_field "PIDS")"
+
+	while read line; do
+		eval echo \"$line\" >> "$tmp_file"
+	done < "$template"
+	install_p "$tmp_file" "$output"
+	rm "$tmp_file"
+}
+
+
+sane_config() {
+	echo "/etc/sane.d/smfp-${VENDOR_LC}.conf"
+}
+udev_rules() {
+	echo "/etc/udev/rules.d/60_smfp_${VENDOR_LC}.rules"
+}
+
+hal_rules() {
+	echo "/usr/share/hal/fdi/policy/10osvendor/01_smfp_${VENDOR_LC}.fdi"
+}
+
+install_base_files() {
+	## packet specific files
+	local CONF_TMP=`mktemp -t smfp_config.XXX`
+	
+	install_p "$DIST_SANE_CONFIG_FILE" $(sane_config)
+	
+	fill_full_template "$DIST_UDEV_RULES_FILE_IN" $(udev_rules)
+	fill_full_template "$DIST_HAL_RULES_FILE_IN" $(hal_rules)
+}
+
+do_install() {
+	log_message "INSTALL SCANNER PACKET $VENDOR_LC"
+	install_base_files 2>&1 | log_message
+
+	restart_hal 2>&1 | log_message
+		
+	print_message $MSG_RESTART_UDEV
+	restart_udev >"$LOG_FILE" 2>&1 || print_error $MSG_FAILURE_RESTART_UDEV
+	
+#	print_message $(gettext "Install configuration files for SANE backend ...")
+#	wait_to_allow_to_see_info_line
+}
+
+do_uninstall() {
+	log_message "UNINSTALL SCANNER PACKET $VENDOR_LC"
+	
+	restart_hal 2>&1 | log_message
+	
+	print_message $MSG_RESTART_UDEV
+	restart_udev >"$LOG_FILE" 2>&1 || print_error $MSG_FAILURE_RESTART_UDEV
+
+#	print_message $(gettext "Uninstall configuration files for SANE backend ...")
+#	wait_to_allow_to_see_info_line
+	true
+}
+
+dependencies() {
+	echo "scanner"
+	exit 0
+}
+
+# 1. the parameter "scanner" determines the name of the directory packet will be installed
+# example /opt/samsung/scanner
+# be careful if you change "scanner" to something else
+# packet will be installed in /opt/samsung/something_else
+# 2. --vendor-specific parameter determines that this packet will be installed 
+# in /opt/$VENDOR/scanner directory otherwise it will be installed in /opt/smfp-common/scanner
+package_name() {
+	echo "scanner" 
+}
+
+# if package is vendor independent then it have to return "no"
+# if not then "yes"
+package_suffix(){
+	echo "-script"
+}
+
+local_init() {
+# TODO: put here real path
+# now try to find smfp.conf in uld/noarch
+DIST_SANE_CONFIG_FILE="$DIST_DIR/noarch/etc/smfp.conf"
+DIST_UDEV_RULES_FILE_IN="$DIST_DIR/noarch/etc/smfp.rules.in"
+DIST_HAL_RULES_FILE_IN="$DIST_DIR/noarch/etc/smfp.fdi.in"
+
+MSG_RESTART_UDEV=$(gettext "Restarting udev ...")
+MSG_FAILURE_RESTART_UDEV=$(gettext "Failure to restart udev")
+}
+
+get_components() {
+	if ! ls /usr/lib*/libsane.* >/dev/null 2>&1 ; then
+		if [ -z "$(find /usr -name libsane.so* 2>/dev/null)" ] ; then  
+			echo "sane"
+		fi
+	fi
+}

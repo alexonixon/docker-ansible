@@ -1,0 +1,118 @@
+install_base_files() {
+	## packet specific files
+	local SANE_DIR=/usr/lib${LIBSFX}/sane
+	if ! [ -d "$SANE_DIR" ] ; then
+		SANE_DIR=/usr/lib/sane
+		if ! [ -d /usr/lib/sane ] ; then
+			log_message "ERROR: cannot find sane directory"	
+			return
+		fi
+	fi
+	mkdir_p "$INSTDIR_COMMON_SCANNER_LIB"
+	install_lns_data_p "$DIST_DIR/$HARDWARE_PLATFORM/libsane-smfp.so.1.0.1" "$INSTDIR_COMMON_SCANNER_LIB" "$SANE_DIR"
+
+	rm -f "$SANE_DIR/libsane-smfp.so" "$SANE_DIR/libsane-smfp.so.1"
+	lns_p "$SANE_DIR/libsane-smfp.so.1.0.1" "$SANE_DIR/libsane-smfp.so.1"
+	lns_p "$SANE_DIR/libsane-smfp.so.1" "$SANE_DIR/libsane-smfp.so"
+
+	mkdir_p "$INSTDIR_COMMON_SCANNER_SHARE"
+	mkdir_p "$INSTDIR_COMMON_SCANNER_SHARE/locale"
+	for i in $(ls "$DIST_DIR/noarch/share/locale") ; do
+		mkdir_p "$INSTDIR_COMMON_SCANNER_SHARE/locale/$i"
+		install_lns_data_p "$DIST_DIR/noarch/share/locale/$i/LC_MESSAGES/sane-smfp.mo" "$INSTDIR_COMMON_SCANNER_SHARE/locale/$i" /usr/share/locale/$i/LC_MESSAGES/
+	done
+
+	install_data_p "$DIST_DIR/noarch/pagesize.xml" "$INSTDIR_COMMON_SCANNER_SHARE"
+	install_data_p "$DIST_DIR/noarch/libsane-smfp.cfg" "$INSTDIR_COMMON_SCANNER_SHARE"
+}
+
+register_sane_backend() {
+
+	for SCDIR in /etc/sane.d /usr/local/etc/sane.d ; do
+		if [ -w ${SCDIR}/dll.conf ] ; then
+			if ! grep -q '^smfp$' ${SCDIR}/dll.conf ; then
+				echo "smfp" >> ${SCDIR}/dll.conf
+			fi
+			if grep -q geniusvp2 ${SCDIR}/dll.conf ; then
+				# Comment out geniusvp2 backend
+				cat ${SCDIR}/dll.conf > /tmp/mfp_dll_conf.tmp
+				cat /tmp/mfp_dll_conf.tmp | sed 's/geniusvp2/#geniusvp2/' > ${SCDIR}/dll.conf
+				rm -f /tmp/mfp_dll_conf.tmp
+			fi
+			chmod 664 ${SCDIR}/dll.conf
+		fi
+	done
+	# Create dll.conf if it does not exist
+	DLL_CONFS=`ls /etc/sane.d/dll.conf /usr/local/etc/sane.d/dll.conf 2> /dev/null`
+	if test -z "$DLL_CONFS" ; then
+		echo "smfp" >> /etc/sane.d/dll.conf
+	fi
+}
+
+unregister_sane_backend() {
+
+	for SCDIR in /etc/sane.d /usr/local/etc/sane.d ; do
+		if [ -w ${SCDIR}/dll.conf ] ; then
+			cat ${SCDIR}/dll.conf | grep -v "smfp" | \
+			sed 's/geniusvp2/#geniusvp2/' > /tmp/mfp_dll_conf.tmp
+			cat /tmp/mfp_dll_conf.tmp > ${SCDIR}/dll.conf
+			rm -f /tmp/mfp_dll_conf.tmp
+		fi
+	done
+}
+
+get_components() {
+	if ! ls /usr/lib*/libsane.* >/dev/null 2>&1 ; then
+		if [ -z "$(find /usr -name libsane.so* 2>/dev/null)" ] ; then  
+			echo "sane"
+		fi
+	fi
+}
+
+do_install() {
+	log_message "INSTALL SCANNER PACKET common"
+	install_base_files 2>&1 | log_message
+
+	print_message $MSG_REGISTER_SANE_BACKEND
+	register_sane_backend 2>&1 | log_message
+}
+
+human_readable_name() {
+	echo "Scanner driver"
+}
+
+do_uninstall() {
+	log_message "UNINSTALL SCANNER PACKET common"
+	print_message $MSG_UNREGISTER_SANE_BACKEND
+	unregister_sane_backend 2>&1 | log_message
+}
+
+dependencies() {
+	exit 0
+}
+
+
+# the parameter "printer" determines the name of the directory packet will be installed
+# example /opt/smfp-common/printer
+# be careful if you change "printer" to something else
+# packet will be installed in /opt/smfp-common/something_else
+package_name() {
+	echo "scanner" 
+}
+
+# if package is vendor independent then it have to return "no"
+# if not then "yes"
+package_suffix(){
+	echo ""
+}
+
+local_init() {
+	INSTDIR_COMMON_SCANNER_LIB="$INSTALL_DIR/lib"
+	INSTDIR_COMMON_SCANNER_SHARE="$INSTALL_DIR/share"
+
+	MSG_REGISTER_SANE_BACKEND=$(gettext "Registering SANE backend ...")
+	MSG_UNREGISTER_SANE_BACKEND=$(gettext "Unregistering SANE backend ...")
+	MSG_UNSUPPORTED_DISTRO=$(gettext "Unsupported distribution")
+}
+
+

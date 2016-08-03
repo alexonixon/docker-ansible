@@ -1,0 +1,150 @@
+selinux_rule() {
+# allow cups bind 22161 udp port
+# for netprinter discovery 
+# $1 - delete or add ( -d or -a )
+	local SEMANAGE=semanage
+	if ! which "$SEMANAGE" >/dev/null 2>&1; then
+		SEMANAGE=/usr/sbin/semanage
+		if ! [ -f "$SEMANAGE" ]; then
+			echo "Failed to find 'semanage'" >&2
+			return 1
+		fi
+	fi
+
+	"$SEMANAGE" port "$1" -t ipp_port_t -p udp 22161
+}
+install_selinux_rule() {
+	selinux_rule "-a"
+}
+uninstall_selinux_rule() {
+	selinux_rule "-d"
+}
+
+install_firewall() {
+	# Setup firewall support 
+#	print_message $(gettext "Are you going to use network devices? If yes, it is recommended to configure your firewall.")
+#	print_message_sin_ln $(gettext "If you want to configure firewall, enter 'y'. To skip, enter 'n' or just press enter:")" "
+	print_message $(gettext "Installing firewall rules...")
+#	read_KEY_PRESSED
+
+#	if test "$KEY_PRESSED" = "y" || test "$KEY_PRESSED" = "Y" ; then
+		. "$DIST_DIR/noarch/firewall.sh"
+		make_hole_in_firewall "$DIST_DIR/noarch" 2>&1 | log_message
+		touch_p "$FIREWALL_FILE"
+		
+		install_selinux_rule 2>&1 | log_message
+#	fi
+}
+
+uninstall_firewall() {
+	if [ "$REMOVE_FIREWALL" ]; then
+		. "$DIST_DIR/noarch/firewall.sh"
+		plug_hole_in_firewall "$DIST_DIR/noarch" 
+		
+		uninstall_selinux_rule 
+	fi
+}
+
+get_components() {
+	if ! test -f /etc/cups/printers.conf && ! test -e /usr/sbin/cupsd ; then
+		echo "cups"
+	fi
+	
+	if test -z "`gs --version 2> /dev/null`" ; then
+		echo "ghostscript"
+	fi
+}
+
+instdir_cups_bin() {
+	local d
+	if which cups-config >/dev/null 2>&1; then
+		d=$(cups-config --serverbin)
+		log_message "INSTDIR_CUPS_BIN(actual): <$d>"
+	elif [ -f /usr/lib/cups/filter/pstops ]; then
+		d=/usr/lib/cups
+		log_message "INSTDIR_CUPS_BIN(by pstops): <$d>"
+	elif [ -d /usr/lib$PLSFX/cups ]; then
+		d=/usr/lib$PLSFX/cups
+		log_message "INSTDIR_CUPS_BIN(default for arch): <$d>"
+	else
+		d=/usr/lib/cups
+		log_message "INSTDIR_CUPS_BIN(default): <$d>"
+	fi
+	echo "$d"
+}
+
+install_base_files() {
+	mkdir_p "$INSTDIR_COMMON_PRINTER_LIB"	#was install -v -m 755
+	install_p "$DIST_DIR/$HARDWARE_PLATFORM/libscmssc.so" "$INSTDIR_COMMON_PRINTER_LIB"
+
+	mkdir_p "$INSTDIR_COMMON_PRINTER_BIN"
+	
+#	install_lns_p "$DIST_DIR/$HARDWARE_PLATFORM/mfp" "$INSTDIR_COMMON_PRINTER_BIN" "$INSTDIR_CUPS_BACKENDS"
+	install_lns_p "$DIST_DIR/$HARDWARE_PLATFORM/smfpnetdiscovery" "$INSTDIR_COMMON_PRINTER_BIN" "$INSTDIR_CUPS_BACKENDS"
+	install_lns_p "$DIST_DIR/$HARDWARE_PLATFORM/pstospl" "$INSTDIR_COMMON_PRINTER_BIN" "$INSTDIR_CUPS_FILTERS"
+	install_lns_p "$DIST_DIR/$HARDWARE_PLATFORM/pstosplc" "$INSTDIR_COMMON_PRINTER_BIN" "$INSTDIR_CUPS_FILTERS"
+	install_lns_p "$DIST_DIR/$HARDWARE_PLATFORM/rastertospl" "$INSTDIR_COMMON_PRINTER_BIN" "$INSTDIR_CUPS_FILTERS"
+	install_lns_p "$DIST_DIR/$HARDWARE_PLATFORM/rastertosplc" "$INSTDIR_COMMON_PRINTER_BIN" "$INSTDIR_CUPS_FILTERS"
+}
+
+do_install() {
+	log_message "INSTALL PRINTER PACKET common"
+	print_message $MSG_REGISTER_CUPS_BACKEND
+	install_firewall
+
+	install_base_files 2>&1 | log_message
+}
+
+do_uninstall() {
+	# TODO: not translated
+	log_message "UNINSTALL PRINTER PACKET common"
+	print_message $MSG_UNREGISTER_CUPS_BACKEND	
+
+	uninstall_firewall 2>&1 | log_message
+}
+
+dependencies() {
+	true
+	exit 0
+}
+
+# the parameter "printer" determines the name of the directory packet will be installed
+# example /opt/smfp-common/printer
+# be careful if you change "printer" to something else
+# packet will be installed in /opt/smfp-common/something_else
+package_name() {
+	echo "printer" 
+}
+
+# if package is vendor independent then it have to return "no"
+# if not then "yes"
+package_suffix() {
+	echo ""
+}
+
+# should be call after common_init
+local_init() {
+	INSTDIR_COMMON_PRINTER_LIB="$INSTALL_DIR/lib"
+	INSTDIR_COMMON_PRINTER_BIN="$INSTALL_DIR/bin"
+	INSTDIR_COMMON_PRINTER_SHARE="$INSTALL_DIR/share"
+
+	# binaries
+	INSTDIR_CUPS_BIN=$(instdir_cups_bin)
+	INSTDIR_CUPS_FILTERS="$INSTDIR_CUPS_BIN/filter"
+	INSTDIR_CUPS_BACKENDS="$INSTDIR_CUPS_BIN/backend"
+
+	MSG_REGISTER_CUPS_BACKEND=$(gettext "Registering cups backend ...")
+	MSG_UNREGISTER_CUPS_BACKEND=$(gettext "Unregistering cups backend ...")
+
+	FIREWALL_FILE="$INSTALL_DIR/.firewall"
+	# need to do it here because function do_uninstall is called after deleting all files
+	REMOVE_FIREWALL=
+	if [ "$UNINSTALLMODE" ] && [ -f "$FIREWALL_FILE" ]; then
+		REMOVE_FIREWALL="1"
+	fi
+}
+human_readable_name() {
+	echo "Printer driver"
+}
+
+

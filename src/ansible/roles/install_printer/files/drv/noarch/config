@@ -1,0 +1,45 @@
+DIST_DIR=$(readlink -f "$SCRIPT_ABS_PATH/..") # packet ( uld/ )
+OEM_FILE="$DIST_DIR/noarch/oem.conf"
+
+INSTALL_DIR_COMMON_BASE_PREFIX="smfp-common"
+INSTALL_DIR_COMMON_BASE="$INSTALL_DIR_OPT/$INSTALL_DIR_COMMON_BASE_PREFIX"
+INSTALL_DIR_COMMON_LIB="$INSTALL_DIR_COMMON_BASE/lib"
+
+MODULE_NAME_TEMPLATE() {
+# $1 - first module name
+	echo "$DIST_DIR/noarch/install-${1}"
+}
+
+INSTALL_DIR_PREFIX_TEMPLATE() {
+# $1 - package name
+# $2 - if exist that means package is vendor specific
+
+# if there is no parameters then try to get 
+# PACKAGE_NAME=
+# PACKAGE_SUFFIX=
+	if [ -z "$1" ]; then 
+		if [ -n "$PACKAGE_NAME" ]; then 
+			if [ -n "$PACKAGE_SUFFIX" ]; then
+				echo "$VENDOR_LC/$PACKAGE_NAME" #vendor specific package
+			else
+				echo "$INSTALL_DIR_COMMON_BASE_PREFIX/$PACKAGE_NAME" #common package
+			fi
+		else
+			abort_execution " PACKAGE NAME is undefined"
+		fi
+
+	else
+		if [ -n "$2" ] ; then
+			echo "$VENDOR_LC/$1" #vendor specific package
+		else
+			echo "$INSTALL_DIR_COMMON_BASE_PREFIX/$1" #common package
+		fi
+	fi
+}
+
+DIST_VERSION_FILE_TEMPLATE() {
+	echo "$DIST_DIR/noarch/.version-${PACKAGE_NAME}${PACKAGE_SUFFIX}"
+}
+
+
+
